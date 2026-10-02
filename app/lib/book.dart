@@ -10,33 +10,49 @@ import 'package:xml/xml.dart';
 /// A book flattened into what the reader needs: sections (pages or chapters),
 /// paragraphs for display, and sentences for speech.
 class Book {
-  Book(this.title, this.sections, this.paragraphs, this.sentences);
+  Book(this.title, this.sections, this.paragraphs, this.sentences, this.languages);
 
   final String title;
   final List<Section> sections;
   final List<Paragraph> paragraphs;
   final List<Sentence> sentences;
 
+  /// Language codes that occur in the book ('en', 'hi', 'mr').
+  final Set<String> languages;
+
   /// Builds the display/speech structure from parsed raw text.
   factory Book.fromRaw(RawBook raw) {
     final sections = <Section>[];
     final paragraphs = <Paragraph>[];
-    final sentences = <Sentence>[];
+    final texts = <String>[];
+    final sentencePara = <int>[];
+    final sentenceSection = <int>[];
     for (final rs in raw.sections) {
       final si = sections.length;
-      sections.add(Section(rs.title, paragraphs.length, sentences.length));
+      sections.add(Section(rs.title, paragraphs.length, texts.length));
       for (final text in rs.paragraphs) {
         final pi = paragraphs.length;
-        final first = sentences.length;
+        final first = texts.length;
         for (final part in splitSentences(text)) {
-          sentences.add(Sentence(part, pi, si));
+          texts.add(part);
+          sentencePara.add(pi);
+          sentenceSection.add(si);
         }
-        if (sentences.length > first) {
-          paragraphs.add(Paragraph(si, first, sentences.length));
-        }
+        if (texts.length > first) paragraphs.add(Paragraph(si, first, texts.length));
       }
     }
-    return Book(raw.title, sections, paragraphs, sentences);
+
+    // Hindi and Marathi share the Devanagari script, so decide once per book which one it is.
+    final devanagari = [for (final t in texts) isDevanagari(t)];
+    final devanagariLang = detectDevanagariLanguage([
+      for (var i = 0; i < texts.length; i++)
+        if (devanagari[i]) texts[i],
+    ].take(3000));
+    final sentences = [
+      for (var i = 0; i < texts.length; i++)
+        Sentence(texts[i], sentencePara[i], sentenceSection[i], devanagari[i] ? devanagariLang : 'en'),
+    ];
+    return Book(raw.title, sections, paragraphs, sentences, {for (final s in sentences) s.lang});
   }
 }
 
@@ -55,10 +71,11 @@ class Paragraph {
 }
 
 class Sentence {
-  Sentence(this.text, this.paragraph, this.section);
+  Sentence(this.text, this.paragraph, this.section, this.lang);
   final String text;
   final int paragraph;
   final int section;
+  final String lang; // 'en', 'hi' or 'mr'
 }
 
 /// Plain parse result; simple enough to pass back from a background isolate.
@@ -152,7 +169,7 @@ List<String> _pdfParagraphs(String pageText) {
     } else {
       buf = buf.isEmpty ? line : '$buf $line';
     }
-    final endsSentence = RegExp(r'''[.!?:।]["'”’)\]]*$''').hasMatch(line);
+    final endsSentence = RegExp(r'''[.!?:।॥]["'”’)\]]*$''').hasMatch(line);
     if (endsSentence && line.length < typical * 0.75) flush();
   }
   flush();
@@ -296,6 +313,40 @@ List<String> htmlParagraphs(dom.Element root) {
   return out;
 }
 
+/* ------------------------------------------------------------- Language */
+
+final _devanagariChar = RegExp('[\u0900-\u097F]');
+final _latinChar = RegExp('[A-Za-z]');
+
+bool isDevanagari(String text) =>
+    _devanagariChar.allMatches(text).length > _latinChar.allMatches(text).length;
+
+// Very common words that appear in one language but not the other.
+const _marathiWords = {
+  'आहे', 'आहेत', 'आणि', 'नाही', 'होते', 'होता', 'होती', 'मध्ये', 'केले', 'करून', 'आपण',
+  'म्हणून', 'असे', 'आता', 'पण', 'त्याला', 'त्यांनी', 'त्याच्या', 'च्या', 'आम्ही', 'तुम्ही',
+};
+const _hindiWords = {
+  'है', 'हैं', 'और', 'नहीं', 'था', 'थी', 'थे', 'के', 'में', 'की', 'से', 'को', 'पर', 'भी',
+  'यह', 'वह', 'लिए', 'कि', 'हम', 'आप',
+};
+
+/// Tells Marathi from Hindi by counting language-specific common words
+/// (and the letter ळ, which Hindi doesn't use).
+String detectDevanagariLanguage(Iterable<String> texts) {
+  var marathi = 0;
+  var hindi = 0;
+  final separators = RegExp(r'[\s,.;:!?।॥"“”‘’()\-]+');
+  for (final t in texts) {
+    for (final w in t.split(separators)) {
+      if (_marathiWords.contains(w)) marathi++;
+      if (_hindiWords.contains(w)) hindi++;
+    }
+    marathi += 'ळ'.allMatches(t).length;
+  }
+  return marathi > hindi ? 'mr' : 'hi';
+}
+
 /* ------------------------------------------------------------ Sentences */
 
 const _maxChunk = 240; // long sentences are split so the speech engine never stalls
@@ -308,7 +359,7 @@ const _abbreviations = {
 List<String> splitSentences(String text) {
   final parts = <String>[];
   var start = 0;
-  for (final m in RegExp(r'''[.!?।]+["'”’)\]]*\s+''').allMatches(text)) {
+  for (final m in RegExp(r'''[.!?।॥]+["'”’)\]]*\s+''').allMatches(text)) {
     final next = m.end < text.length ? text[m.end] : '';
     if (RegExp('[a-z]').hasMatch(next)) continue; // "e.g. this" – not a sentence end
     final before = text.substring(start, m.start);

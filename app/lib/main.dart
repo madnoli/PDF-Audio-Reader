@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
@@ -5,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 
+import 'background.dart';
 import 'book.dart';
 import 'reader.dart';
 
@@ -62,6 +65,7 @@ class _ReaderPageState extends State<ReaderPage> {
     super.initState();
     reader.addListener(_followReading);
     reader.init();
+    if (Platform.isAndroid) startBackgroundAudio(reader);
   }
 
   @override
@@ -171,34 +175,10 @@ class _ReaderPageState extends State<ReaderPage> {
       builder: (context) => DraggableScrollableSheet(
         expand: false,
         initialChildSize: 0.6,
-        builder: (context, controller) => ListenableBuilder(
-          listenable: reader,
-          builder: (context, _) {
-            final voices = reader.visibleVoices;
-            return ListView(
-              controller: controller,
-              children: [
-                SwitchListTile(
-                  title: const Text('Indian voices only'),
-                  subtitle: Text('${reader.indianVoices.length} Indian voices on this device'),
-                  value: reader.indianOnly,
-                  onChanged: reader.setIndianOnly,
-                ),
-                const Divider(height: 1),
-                if (voices.isEmpty)
-                  const ListTile(title: Text('No voices found. Install a text-to-speech voice in system settings.')),
-                for (final v in voices)
-                  ListTile(
-                    title: Text(v.label),
-                    trailing: v.name == reader.voice?.name ? const Icon(Icons.check) : null,
-                    onTap: () {
-                      reader.setVoice(v);
-                      Navigator.of(context).pop();
-                    },
-                  ),
-              ],
-            );
-          },
+        builder: (context, controller) => VoiceSheet(
+          reader: reader,
+          scrollController: controller,
+          initialLanguage: reader.current?.lang ?? 'en',
         ),
       ),
     );
@@ -304,6 +284,88 @@ class _ReaderPageState extends State<ReaderPage> {
         }
         return Center(
           child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 760), child: child),
+        );
+      },
+    );
+  }
+}
+
+/// Picks a voice for each language; Hindi/Marathi text automatically uses its own voice.
+class VoiceSheet extends StatefulWidget {
+  const VoiceSheet({
+    super.key,
+    required this.reader,
+    required this.scrollController,
+    required this.initialLanguage,
+  });
+
+  final ReaderController reader;
+  final ScrollController scrollController;
+  final String initialLanguage;
+
+  @override
+  State<VoiceSheet> createState() => _VoiceSheetState();
+}
+
+class _VoiceSheetState extends State<VoiceSheet> {
+  late String _lang = widget.initialLanguage;
+
+  @override
+  Widget build(BuildContext context) {
+    final reader = widget.reader;
+    final theme = Theme.of(context);
+    return ListenableBuilder(
+      listenable: reader,
+      builder: (context, _) {
+        final voices = reader.voiceChoices(_lang);
+        final selected = reader.voiceFor(_lang);
+        final name = languageNames[_lang]!;
+        return ListView(
+          controller: widget.scrollController,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: Text('Voice for each language in the book', style: theme.textTheme.titleMedium),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: SegmentedButton<String>(
+                segments: [
+                  for (final e in languageNames.entries) ButtonSegment(value: e.key, label: Text(e.value)),
+                ],
+                selected: {_lang},
+                onSelectionChanged: (s) => setState(() => _lang = s.first),
+              ),
+            ),
+            SwitchListTile(
+              title: const Text('Indian voices only'),
+              subtitle: Text('${reader.indianVoices.length} Indian voices on this device'),
+              value: reader.indianOnly,
+              onChanged: reader.setIndianOnly,
+            ),
+            const Divider(height: 1),
+            if (!reader.hasVoiceFor(_lang))
+              ListTile(
+                leading: const Icon(Icons.info_outline),
+                title: Text(selected == null
+                    ? 'No $name voice installed.'
+                    : 'No $name voice installed. $name text will use ${selected.label}.'),
+                subtitle: Text(reader.installHint(_lang)),
+              ),
+            for (final v in voices)
+              ListTile(
+                title: Text(v.label),
+                trailing: v.name == selected?.name ? const Icon(Icons.check) : null,
+                onTap: () => reader.setVoiceFor(_lang, v),
+              ),
+            if (reader.hasVoiceFor(_lang))
+              ListTile(
+                dense: true,
+                leading: const Icon(Icons.add),
+                title: const Text('More voices'),
+                subtitle: Text(reader.installHint(_lang)),
+              ),
+          ],
         );
       },
     );
@@ -446,7 +508,7 @@ class _PlayerBar extends StatelessWidget {
                         style: theme.textTheme.titleSmall, textAlign: TextAlign.end),
                   ),
                   IconButton(
-                    tooltip: 'Voice: ${reader.voice?.label ?? 'default'}',
+                    tooltip: 'Voices',
                     icon: const Icon(Icons.record_voice_over),
                     onPressed: onVoices,
                   ),

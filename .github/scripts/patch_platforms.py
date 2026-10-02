@@ -22,16 +22,59 @@ def edit(path, *replacements):
     print(f"patched {path}")
 
 
+ANDROID_PERMISSIONS = """
+    xmlns:tools="http://schemas.android.com/tools">
+    <!-- Keep reading in a foreground service after the app is closed (audio_service). -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />"""
+
+# Android 11+ hides the text-to-speech engines from apps unless they declare this.
+ANDROID_TTS_QUERY = """<queries>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+    </queries>
+    <application"""
+
+ANDROID_MEDIA_SERVICE = """    <service android:name="com.ryanheise.audioservice.AudioService"
+            android:foregroundServiceType="mediaPlayback"
+            android:exported="true" tools:ignore="Instantiatable">
+            <intent-filter>
+                <action android:name="android.media.browse.MediaBrowserService" />
+            </intent-filter>
+        </service>
+        <receiver android:name="com.ryanheise.audioservice.MediaButtonReceiver"
+            android:exported="true" tools:ignore="Instantiatable">
+            <intent-filter>
+                <action android:name="android.intent.action.MEDIA_BUTTON" />
+            </intent-filter>
+        </receiver>
+    </application>"""
+
 # The default widget test refers to the template's counter app.
 shutil.rmtree(app / "test", ignore_errors=True)
 
 if "android" in sys.argv:
     edit(
         "android/app/src/main/AndroidManifest.xml",
+        ('xmlns:android="http://schemas.android.com/apk/res/android">',
+         'xmlns:android="http://schemas.android.com/apk/res/android"' + ANDROID_PERMISSIONS),
         ('android:label="audio_reader"', 'android:label="Audio Reader"'),
-        # Android 11+ hides the text-to-speech engines from apps unless they declare this.
-        ("<application", '<queries>\n        <intent>\n            <action android:name="android.intent.action.TTS_SERVICE" />\n        </intent>\n    </queries>\n    <application'),
+        ("<application", ANDROID_TTS_QUERY),
+        ("</application>", ANDROID_MEDIA_SERVICE),
     )
+
+    # audio_service keeps the Flutter engine alive in the background through its own activity class.
+    activity = next((app / "android/app/src/main").rglob("MainActivity.kt"))
+    package = re.search(r"^package .+$", activity.read_text(encoding="utf-8"), re.M).group(0)
+    activity.write_text(
+        f"{package}\n\nimport com.ryanheise.audioservice.AudioServiceActivity\n\n"
+        "class MainActivity : AudioServiceActivity()\n",
+        encoding="utf-8",
+    )
+    print(f"patched {activity.relative_to(app)}")
+
     gradle = app / "android/app/build.gradle.kts"
     text = gradle.read_text(encoding="utf-8")
     # flutter_tts needs Android 7.0 (API 24) or newer.

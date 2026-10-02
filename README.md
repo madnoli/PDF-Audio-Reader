@@ -9,7 +9,16 @@ The [`app/`](app/) folder holds a Flutter version that runs on its own, with no 
 - **Download a build:** open the repo's **Actions** tab, click the latest *Build apps* run, and download **AudioReader-windows** (unzip, run `AudioReader.exe`) or **AudioReader-android** (copy the `.apk` to your phone and install it; allow "install unknown apps" when asked).
 - **Make a release:** push a version tag (`git tag v1.0.0` then `git push origin v1.0.0`) and both files appear on the repo's **Releases** page.
 
-Voices come from the device: Heera and Ravi (English India) on Windows, and Google's English (India) and Hindi voices on Android. If none show up, install them in **Settings › Text-to-speech › Google › Install voice data** (Android) or **Settings › Time & language › Speech › Add voices** (Windows).
+Voices come from the device. The voice button lets you pick one voice each for **English**, **Hindi** and **Marathi**; Devanagari sentences switch to the Hindi or Marathi voice automatically (the app works out which of the two a book is written in).
+
+| | English (India) | Hindi | Marathi |
+|---|---|---|---|
+| Windows | Heera, Ravi | Hemant, Kalpana (install "Hindi (India)" in **Settings › Time & language › Speech › Add voices**) | No Windows voice; the Hindi voice is used |
+| Android | Google voices | Google voices | Google voices |
+
+On Android, install missing voices in **Settings › Text-to-speech output › Google › Install voice data**. Reading continues in the background (with controls in the notification and on the lock screen) after you switch apps or close the app.
+
+Hindi and Marathi EPUBs work well. Many Hindi/Marathi PDFs use old non-Unicode fonts (such as Kruti Dev), and their text can't be extracted correctly by any reader.
 
 Each build is signed with a new temporary key, so on Android you need to uninstall the old version before installing a newer build.
 
