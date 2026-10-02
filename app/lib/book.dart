@@ -30,7 +30,7 @@ class Book {
     for (final rs in raw.sections) {
       final si = sections.length;
       sections.add(Section(rs.title, paragraphs.length, texts.length));
-      for (final text in rs.paragraphs) {
+      for (final text in mergeFragments(rs.paragraphs)) {
         final pi = paragraphs.length;
         final first = texts.length;
         for (final part in splitSentences(text)) {
@@ -310,6 +310,35 @@ List<String> htmlParagraphs(dom.Element root) {
 
   walk(root);
   flush();
+  return out;
+}
+
+/* ------------------------------------------------------------ Paragraphs */
+
+final _startsLowercase = RegExp(r'^[a-z]');
+final _endsSentence = RegExp(r'''[.!?:;।॥"”’)\]]$''');
+
+int _wordCount(String s) => ' '.allMatches(s).length + 1;
+
+/// Rejoins text that a file split into tiny pieces (some PDFs and converted
+/// EPUBs put every word or line in its own block). A piece joins the previous
+/// paragraph when that paragraph hasn't finished its sentence and the piece
+/// either continues in lowercase or both are just a few words long.
+/// Headings stay separate because the text after them is a full paragraph.
+List<String> mergeFragments(List<String> paragraphs) {
+  final out = <String>[];
+  for (final p in paragraphs) {
+    if (out.isNotEmpty) {
+      final prev = out.last;
+      final continues = !_endsSentence.hasMatch(prev) &&
+          (_startsLowercase.hasMatch(p) || (_wordCount(prev) <= 3 && _wordCount(p) <= 3));
+      if (continues) {
+        out[out.length - 1] = '$prev $p';
+        continue;
+      }
+    }
+    out.add(p);
+  }
   return out;
 }
 

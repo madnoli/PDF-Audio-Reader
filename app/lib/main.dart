@@ -308,8 +308,13 @@ class _ReaderPageState extends State<ReaderPage> {
             },
           );
         }
+        // Full width up to a comfortable line length; Center alone would shrink-wrap
+        // short paragraphs and float them in the middle.
         return Center(
-          child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 760), child: child),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 760),
+            child: SizedBox(width: double.infinity, child: child),
+          ),
         );
       },
     );
@@ -475,6 +480,7 @@ class _ParagraphViewState extends State<ParagraphView> {
               mouseCursor: SystemMouseCursors.click,
             ),
         ]),
+        textAlign: TextAlign.justify,
         style: theme.textTheme.bodyLarge?.copyWith(fontSize: 19, height: 1.6),
       ),
     );
