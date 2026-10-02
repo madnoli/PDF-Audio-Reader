@@ -9,6 +9,8 @@ import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 
 import 'background.dart';
 import 'book.dart';
+import 'library.dart';
+import 'library_page.dart';
 import 'reader.dart';
 
 void main() {
@@ -51,6 +53,7 @@ class ReaderPage extends StatefulWidget {
 
 class _ReaderPageState extends State<ReaderPage> {
   final reader = ReaderController();
+  final library = LibraryController();
   final _scroll = ItemScrollController();
   final _positions = ItemPositionsListener.create();
 
@@ -65,6 +68,7 @@ class _ReaderPageState extends State<ReaderPage> {
     super.initState();
     reader.addListener(_followReading);
     reader.init();
+    library.load();
     if (Platform.isAndroid) startBackgroundAudio(reader);
   }
 
@@ -72,6 +76,7 @@ class _ReaderPageState extends State<ReaderPage> {
   void dispose() {
     reader.removeListener(_followReading);
     reader.dispose();
+    library.dispose();
     super.dispose();
   }
 
@@ -83,20 +88,35 @@ class _ReaderPageState extends State<ReaderPage> {
       _showError('Could not open the file picker: $e');
       return;
     }
-    if (file == null) return;
+    if (file != null) await _openBook(file.name, file.readAsBytes);
+  }
 
+  Future<void> _openLibrary() async {
+    final picked = await Navigator.of(context).push<BookFile>(
+      MaterialPageRoute(builder: (_) => LibraryPage(library: library)),
+    );
+    if (picked == null) return;
+    if (!File(picked.path).existsSync()) {
+      library.forget(picked);
+      _showError('${picked.name} no longer exists. It has been removed from the library.');
+      return;
+    }
+    await _openBook(picked.name, () => File(picked.path).readAsBytes());
+  }
+
+  Future<void> _openBook(String name, Future<Uint8List> Function() readBytes) async {
     await reader.stop();
-    setState(() => _loading = 'Reading ${file!.name}…');
+    setState(() => _loading = 'Reading $name…');
     try {
-      final bytes = await file.readAsBytes();
-      final raw = await compute(parseBook, (file.name, bytes));
-      final title = raw.title.isNotEmpty ? raw.title : file.name.replaceFirst(RegExp(r'\.[^.]+$'), '');
+      final bytes = await readBytes();
+      final raw = await compute(parseBook, (name, bytes));
+      final title = raw.title.isNotEmpty ? raw.title : name.replaceFirst(RegExp(r'\.[^.]+$'), '');
       final book = Book.fromRaw(RawBook(title, raw.sections));
       if (book.sentences.isEmpty) throw BookFormatException('No readable text found in this file.');
 
       _buildItems(book);
       _lastParagraph = -1;
-      reader.openBook(book, '${file.name}:${bytes.length}');
+      reader.openBook(book, '$name:${bytes.length}');
       setState(() => _loading = null);
       WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToCurrent(jump: true));
     } on BookFormatException catch (e) {
@@ -104,7 +124,7 @@ class _ReaderPageState extends State<ReaderPage> {
       _showError(e.message);
     } catch (e) {
       setState(() => _loading = null);
-      _showError('Could not open ${file.name}: $e');
+      _showError('Could not open $name: $e');
     }
   }
 
@@ -192,6 +212,7 @@ class _ReaderPageState extends State<ReaderPage> {
         const SingleActivator(LogicalKeyboardKey.arrowRight): () => _step(1),
         const SingleActivator(LogicalKeyboardKey.arrowLeft): () => _step(-1),
         const SingleActivator(LogicalKeyboardKey.keyO, control: true): _openFile,
+        const SingleActivator(LogicalKeyboardKey.keyL, control: true): _openLibrary,
       },
       child: Focus(
         autofocus: true,
@@ -203,6 +224,11 @@ class _ReaderPageState extends State<ReaderPage> {
               appBar: AppBar(
                 title: Text(book?.title ?? 'Audio Reader', overflow: TextOverflow.ellipsis),
                 actions: [
+                  IconButton(
+                    tooltip: 'Library (Ctrl+L)',
+                    icon: const Icon(Icons.local_library),
+                    onPressed: _loading == null ? _openLibrary : null,
+                  ),
                   IconButton(
                     tooltip: 'Open PDF / EPUB (Ctrl+O)',
                     icon: const Icon(Icons.folder_open),
@@ -218,7 +244,7 @@ class _ReaderPageState extends State<ReaderPage> {
                       Text(_loading!),
                     ]))
                   : book == null
-                      ? _Welcome(onOpen: _openFile)
+                      ? _Welcome(onOpen: _openFile, onLibrary: _openLibrary)
                       : _buildBook(book),
               bottomNavigationBar: book == null ? null : _PlayerBar(
                 reader: reader,
@@ -553,8 +579,9 @@ class _SpeedSliderState extends State<_SpeedSlider> {
 }
 
 class _Welcome extends StatelessWidget {
-  const _Welcome({required this.onOpen});
+  const _Welcome({required this.onOpen, required this.onLibrary});
   final VoidCallback onOpen;
+  final VoidCallback onLibrary;
 
   @override
   Widget build(BuildContext context) {
@@ -574,9 +601,15 @@ class _Welcome extends StatelessWidget {
           ),
           const SizedBox(height: 24),
           FilledButton.icon(
+            onPressed: onLibrary,
+            icon: const Icon(Icons.manage_search),
+            label: const Text('Find books on this device'),
+          ),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
             onPressed: onOpen,
             icon: const Icon(Icons.folder_open),
-            label: const Text('Open PDF / EPUB'),
+            label: const Text('Open a file'),
           ),
         ],
       ),

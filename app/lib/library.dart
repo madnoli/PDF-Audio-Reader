@@ -1,0 +1,237 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+import 'dart:isolate';
+
+import 'package:flutter/foundation.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:permission_handler/permission_handler.dart';
+
+/// A PDF or EPUB found on the device.
+class BookFile {
+  BookFile(this.path, this.size, this.modified);
+
+  final String path;
+  final int size;
+  final DateTime modified;
+
+  String get name => path.split(RegExp(r'[\\/]')).last;
+  String get title => name.replaceFirst(RegExp(r'\.[^.]+$'), '');
+  String get folder {
+    final i = path.lastIndexOf(RegExp(r'[\\/]'));
+    return i > 0 ? path.substring(0, i) : path;
+  }
+
+  bool get isPdf => name.toLowerCase().endsWith('.pdf');
+
+  Map<String, Object> toJson() => {'p': path, 's': size, 'm': modified.millisecondsSinceEpoch};
+  factory BookFile.fromJson(Map<String, dynamic> j) =>
+      BookFile(j['p'] as String, j['s'] as int, DateTime.fromMillisecondsSinceEpoch(j['m'] as int));
+}
+
+/// Finds books on the device and remembers them between launches.
+class LibraryController extends ChangeNotifier {
+  List<BookFile> books = [];
+  bool scanning = false;
+  int foldersScanned = 0;
+  String? message;
+  DateTime? lastScan;
+
+  Isolate? _isolate;
+  ReceivePort? _port;
+  Completer<void>? _done;
+  File? _store;
+
+  Future<void> load() async {
+    try {
+      final dir = await getApplicationSupportDirectory();
+      _store = File('${dir.path}${Platform.pathSeparator}library.json');
+      if (await _store!.exists()) {
+        final data = jsonDecode(await _store!.readAsString()) as Map<String, dynamic>;
+        books = [for (final b in data['books'] as List) BookFile.fromJson(b as Map<String, dynamic>)];
+        lastScan = DateTime.fromMillisecondsSinceEpoch(data['lastScan'] as int);
+        notifyListeners();
+      }
+    } catch (_) {
+      // A missing or corrupt library file just means scanning again.
+    }
+  }
+
+  Future<void> _save() async {
+    try {
+      await _store?.writeAsString(jsonEncode({
+        'lastScan': lastScan?.millisecondsSinceEpoch ?? 0,
+        'books': [for (final b in books) b.toJson()],
+      }));
+    } catch (_) {}
+  }
+
+  Future<void> scan() async {
+    if (scanning) return;
+    if (!await _ensurePermission()) {
+      message = 'Allow "All files access" for Audio Reader so it can find your books, then scan again.';
+      notifyListeners();
+      return;
+    }
+
+    scanning = true;
+    foldersScanned = 0;
+    message = null;
+    final found = <BookFile>[];
+    books = [];
+    notifyListeners();
+
+    final roots = await _scanRoots();
+    final port = ReceivePort();
+    _port = port;
+    final done = _done = Completer<void>();
+    port.listen((msg) {
+      if (msg is int) {
+        foldersScanned = msg;
+      } else if (msg is List) {
+        for (final m in msg) {
+          found.add(BookFile.fromJson((m as Map).cast<String, dynamic>()));
+        }
+        books = _sorted(found);
+      } else if (msg == null) {
+        if (!done.isCompleted) done.complete();
+        return;
+      }
+      notifyListeners();
+    });
+    try {
+      _isolate = await Isolate.spawn(_scanIsolate, (port.sendPort, roots));
+      await done.future;
+    } catch (e) {
+      message = 'Scan failed: $e';
+    }
+    _finishScan(found);
+  }
+
+  void cancelScan() {
+    if (!scanning) return;
+    _isolate?.kill(priority: Isolate.immediate);
+    if (_done?.isCompleted == false) _done!.complete();
+    _finishScan(books);
+    message = 'Scan stopped. Showing the books found so far.';
+    notifyListeners();
+  }
+
+  void _finishScan(List<BookFile> found) {
+    if (!scanning) return;
+    _port?.close();
+    _port = null;
+    _isolate = null;
+    scanning = false;
+    books = _sorted(found);
+    lastScan = DateTime.now();
+    message ??= books.isEmpty ? 'No PDF or EPUB files found.' : null;
+    _save();
+    notifyListeners();
+  }
+
+  List<BookFile> _sorted(List<BookFile> list) =>
+      [...list]..sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
+
+  /// Drops a book that no longer exists (e.g. deleted since the last scan).
+  void forget(BookFile book) {
+    books = books.where((b) => b.path != book.path).toList();
+    _save();
+    notifyListeners();
+  }
+
+  Future<bool> _ensurePermission() async {
+    if (!Platform.isAndroid) return true;
+    // Android 11+ only lets apps see other apps' PDFs with "All files access";
+    // on Android 10 and older that request reports "restricted" and the normal storage permission applies.
+    var status = await Permission.manageExternalStorage.request();
+    if (status.isRestricted) status = await Permission.storage.request();
+    return status.isGranted || status.isLimited;
+  }
+
+  static Future<List<String>> _scanRoots() async {
+    if (Platform.isAndroid) {
+      final roots = <String>['/storage/emulated/0'];
+      try {
+        // SD cards and USB drives appear as /storage/XXXX-XXXX.
+        for (final d in Directory('/storage').listSync()) {
+          final name = d.path.split('/').last;
+          if (d is Directory && name != 'emulated' && name != 'self') roots.add(d.path);
+        }
+      } catch (_) {}
+      return roots;
+    }
+    if (Platform.isWindows) {
+      // Local and removable drives only; network drives can be huge and slow.
+      try {
+        final result = await Process.run('powershell', [
+          '-NoProfile',
+          '-Command',
+          r"Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=2 or DriveType=3' | ForEach-Object { $_.DeviceID }",
+        ]);
+        final drives = '${result.stdout}'
+            .split(RegExp(r'\s+'))
+            .where((d) => RegExp(r'^[A-Z]:$').hasMatch(d))
+            .map((d) => '$d\\')
+            .toList();
+        if (drives.isNotEmpty) return drives;
+      } catch (_) {}
+      return [Platform.environment['USERPROFILE'] ?? r'C:\'];
+    }
+    return [Platform.environment['HOME'] ?? '/'];
+  }
+}
+
+// Folders that hold program or system files rather than the user's books.
+const _skipFolders = {
+  r'$recycle.bin', 'system volume information', 'windows', 'program files', 'program files (x86)',
+  'programdata', 'appdata', 'node_modules', '__pycache__', 'site-packages', 'recovery', 'msocache',
+  'perflogs', 'intel', 'amd', 'nvidia', 'drivers', 'windows.old', r'$windows.~bt', r'$windows.~ws',
+};
+
+/// Runs in a background isolate: walks the folders and streams back results.
+/// Messages: `int` = folders scanned so far, `List` = a batch of books, `null` = finished.
+void _scanIsolate((SendPort, List<String>) args) {
+  final (port, roots) = args;
+  final stack = [for (final r in roots) Directory(r)];
+  final batch = <Map<String, Object>>[];
+  var folders = 0;
+  final seen = <String>{};
+
+  void flush() {
+    if (batch.isNotEmpty) port.send(List.of(batch));
+    batch.clear();
+    port.send(folders);
+  }
+
+  while (stack.isNotEmpty) {
+    final dir = stack.removeLast();
+    List<FileSystemEntity> entries;
+    try {
+      entries = dir.listSync(followLinks: false);
+    } catch (_) {
+      continue; // no access
+    }
+    folders++;
+    for (final e in entries) {
+      final name = e.path.split(RegExp(r'[\\/]')).last;
+      final lower = name.toLowerCase();
+      if (e is Directory) {
+        if (lower.startsWith('.') || _skipFolders.contains(lower)) continue;
+        // Android/data and Android/obb hold other apps' private files.
+        if (Platform.isAndroid && (e.path.endsWith('/Android/data') || e.path.endsWith('/Android/obb'))) continue;
+        stack.add(e);
+      } else if (e is File && (lower.endsWith('.pdf') || lower.endsWith('.epub'))) {
+        try {
+          final stat = e.statSync();
+          // The same file can show up twice through /storage/emulated/0 and /storage/self/primary.
+          if (!seen.add('$lower:${stat.size}:${stat.modified.millisecondsSinceEpoch}')) continue;
+          batch.add({'p': e.path, 's': stat.size, 'm': stat.modified.millisecondsSinceEpoch});
+        } catch (_) {}
+      }
+    }
+    if (folders % 250 == 0 || batch.length >= 50) flush();
+  }
+  flush();
+  port.send(null);
+}

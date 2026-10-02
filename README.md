@@ -9,6 +9,8 @@ The [`app/`](app/) folder holds a Flutter version that runs on its own, with no 
 - **Download a build:** open the repo's **Actions** tab, click the latest *Build apps* run, and download **AudioReader-windows** (unzip, run `AudioReader.exe`) or **AudioReader-android** (copy the `.apk` to your phone and install it; allow "install unknown apps" when asked).
 - **Make a release:** push a version tag (`git tag v1.0.0` then `git push origin v1.0.0`) and both files appear on the repo's **Releases** page.
 
+**Library:** tap **Find books on this device** (or the library icon, `Ctrl+L` on Windows) to scan for every PDF and EPUB. Windows scans all local drives, skipping system folders such as Windows, Program Files and AppData; Android scans internal storage and SD cards, and asks once for **All files access**. Results are saved, so the scan only needs repeating when you add books.
+
 Voices come from the device. The voice button lets you pick one voice each for **English**, **Hindi** and **Marathi**; Devanagari sentences switch to the Hindi or Marathi voice automatically (the app works out which of the two a book is written in).
 
 | | English (India) | Hindi | Marathi |

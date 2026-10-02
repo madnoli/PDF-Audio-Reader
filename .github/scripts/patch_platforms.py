@@ -27,7 +27,10 @@ ANDROID_PERMISSIONS = """
     <!-- Keep reading in a foreground service after the app is closed (audio_service). -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />"""
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <!-- Library scan: find PDF/EPUB files anywhere on the device. -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" tools:ignore="ScopedStorage" />"""
 
 # Android 11+ hides the text-to-speech engines from apps unless they declare this.
 ANDROID_TTS_QUERY = """<queries>
@@ -35,7 +38,8 @@ ANDROID_TTS_QUERY = """<queries>
             <action android:name="android.intent.action.TTS_SERVICE" />
         </intent>
     </queries>
-    <application"""
+    <application
+        android:requestLegacyExternalStorage="true\""""
 
 ANDROID_MEDIA_SERVICE = """    <service android:name="com.ryanheise.audioservice.AudioService"
             android:foregroundServiceType="mediaPlayback"
