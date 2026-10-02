@@ -56,6 +56,55 @@ ANDROID_MEDIA_SERVICE = """    <service android:name="com.ryanheise.audioservice
         </receiver>
     </application>"""
 
+MAIN_ACTIVITY = """
+import android.Manifest
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.provider.Settings
+import com.ryanheise.audioservice.AudioServiceActivity
+import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.MethodChannel
+
+class MainActivity : AudioServiceActivity() {
+    override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
+        super.configureFlutterEngine(flutterEngine)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "audio_reader/storage")
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "hasAccess" -> result.success(hasAllFilesAccess())
+                    "requestAccess" -> {
+                        requestAllFilesAccess()
+                        result.success(null)
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+    }
+
+    private fun hasAllFilesAccess(): Boolean =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            Environment.isExternalStorageManager()
+        } else {
+            checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
+        }
+
+    private fun requestAllFilesAccess() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            try {
+                startActivity(Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:$packageName")))
+            } catch (e: Exception) {
+                startActivity(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
+            }
+        } else {
+            requestPermissions(arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE), 1)
+        }
+    }
+}
+"""
+
 # The default widget test refers to the template's counter app.
 shutil.rmtree(app / "test", ignore_errors=True)
 
@@ -70,13 +119,10 @@ if "android" in sys.argv:
     )
 
     # audio_service keeps the Flutter engine alive in the background through its own activity class.
+    # The activity also answers the library's "can I read all files?" questions (see library.dart).
     activity = next((app / "android/app/src/main").rglob("MainActivity.kt"))
     package = re.search(r"^package .+$", activity.read_text(encoding="utf-8"), re.M).group(0)
-    activity.write_text(
-        f"{package}\n\nimport com.ryanheise.audioservice.AudioServiceActivity\n\n"
-        "class MainActivity : AudioServiceActivity()\n",
-        encoding="utf-8",
-    )
+    activity.write_text(package + "\n" + MAIN_ACTIVITY, encoding="utf-8")
     print(f"patched {activity.relative_to(app)}")
 
     gradle = app / "android/app/build.gradle.kts"
