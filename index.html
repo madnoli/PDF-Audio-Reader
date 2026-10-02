@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Audio Book Reader</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+</head>
+<body>
+  <header class="toolbar">
+    <button id="toc-toggle" class="btn icon" title="Contents" aria-label="Toggle contents">☰</button>
+    <label class="btn primary" for="file-input">Open PDF / EPUB</label>
+    <input id="file-input" type="file" accept=".pdf,.epub,application/pdf,application/epub+zip" hidden>
+    <span id="book-title" class="book-title">No book open</span>
+  </header>
+
+  <div class="layout">
+    <nav id="toc" class="toc" aria-label="Contents"></nav>
+    <main id="reader" class="reader">
+      <div id="dropzone" class="dropzone">
+        <h1>Listen to your books</h1>
+        <p>Open a <strong>PDF</strong> or <strong>EPUB</strong> file, or drag and drop it here.</p>
+        <p class="hint">Click any sentence to start reading from there. Keyboard: <kbd>Space</kbd> play/pause, <kbd>←</kbd> <kbd>→</kbd> previous/next sentence.</p>
+      </div>
+    </main>
+  </div>
+
+  <footer class="player">
+    <div class="controls">
+      <button id="prev" class="btn icon" title="Previous sentence (←)" aria-label="Previous sentence">⏮</button>
+      <button id="play" class="btn icon play" title="Play / Pause (Space)" aria-label="Play">▶</button>
+      <button id="next" class="btn icon" title="Next sentence (→)" aria-label="Next sentence">⏭</button>
+    </div>
+    <label class="field">
+      <span>Speed</span>
+      <input id="rate" type="range" min="0.5" max="3" step="0.1" value="1">
+      <output id="rate-value">1.0×</output>
+    </label>
+    <label class="field voice-field">
+      <span>Voice</span>
+      <select id="voice"></select>
+    </label>
+    <label class="field check">
+      <input id="indian-only" type="checkbox" checked>
+      <span>Indian voices only</span>
+    </label>
+    <span id="status" class="status" role="status"></span>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
