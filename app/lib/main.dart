@@ -12,26 +12,35 @@ import 'book.dart';
 import 'library.dart';
 import 'library_page.dart';
 import 'reader.dart';
+import 'text_settings.dart';
+import 'text_settings_sheet.dart';
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  runApp(const AudioReaderApp());
+  final textSettings = TextSettings();
+  await textSettings.load();
+  runApp(AudioReaderApp(textSettings: textSettings));
 }
 
 class AudioReaderApp extends StatelessWidget {
-  const AudioReaderApp({super.key});
+  const AudioReaderApp({super.key, required this.textSettings});
+  final TextSettings textSettings;
 
   @override
   Widget build(BuildContext context) {
     const seed = Color(0xFFC2410C);
-    return MaterialApp(
-      title: 'Audio Reader',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(colorScheme: ColorScheme.fromSeed(seedColor: seed)),
-      darkTheme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: seed, brightness: Brightness.dark),
+    return ListenableBuilder(
+      listenable: textSettings,
+      builder: (context, _) => MaterialApp(
+        title: 'Audio Reader',
+        debugShowCheckedModeBanner: false,
+        themeMode: textSettings.themeMode,
+        theme: ThemeData(colorScheme: ColorScheme.fromSeed(seedColor: seed)),
+        darkTheme: ThemeData(
+          colorScheme: ColorScheme.fromSeed(seedColor: seed, brightness: Brightness.dark),
+        ),
+        home: ReaderPage(textSettings: textSettings),
       ),
-      home: const ReaderPage(),
     );
   }
 }
@@ -45,7 +54,8 @@ class _Item {
 }
 
 class ReaderPage extends StatefulWidget {
-  const ReaderPage({super.key});
+  const ReaderPage({super.key, required this.textSettings});
+  final TextSettings textSettings;
 
   @override
   State<ReaderPage> createState() => _ReaderPageState();
@@ -213,17 +223,26 @@ class _ReaderPageState extends State<ReaderPage> {
         const SingleActivator(LogicalKeyboardKey.arrowLeft): () => _step(-1),
         const SingleActivator(LogicalKeyboardKey.keyO, control: true): _openFile,
         const SingleActivator(LogicalKeyboardKey.keyL, control: true): _openLibrary,
+        const SingleActivator(LogicalKeyboardKey.equal, control: true): () => _zoom(2),
+        const SingleActivator(LogicalKeyboardKey.add, control: true): () => _zoom(2),
+        const SingleActivator(LogicalKeyboardKey.minus, control: true): () => _zoom(-2),
       },
       child: Focus(
         autofocus: true,
         child: ListenableBuilder(
-          listenable: reader,
+          listenable: Listenable.merge([reader, widget.textSettings]),
           builder: (context, _) {
             final book = reader.book;
             return Scaffold(
               appBar: AppBar(
                 title: Text(book?.title ?? 'Audio Reader', overflow: TextOverflow.ellipsis),
                 actions: [
+                  if (book != null)
+                    IconButton(
+                      tooltip: 'Text size and style (Ctrl + / Ctrl -)',
+                      icon: const Icon(Icons.text_fields),
+                      onPressed: _showTextSettings,
+                    ),
                   IconButton(
                     tooltip: 'Library (Ctrl+L)',
                     icon: const Icon(Icons.local_library),
@@ -276,12 +295,35 @@ class _ReaderPageState extends State<ReaderPage> {
     );
   }
 
+  void _zoom(double delta) {
+    final settings = widget.textSettings;
+    settings.update(fontSize: settings.fontSize + delta);
+  }
+
+  void _showTextSettings() {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (context) => TextSettingsSheet(settings: widget.textSettings),
+    );
+  }
+
   Widget _buildBook(Book book) {
     final theme = Theme.of(context);
-    return ScrollablePositionedList.builder(
+    final settings = widget.textSettings;
+    final pageColors = settings.pageColors;
+    final textStyle = theme.textTheme.bodyLarge?.copyWith(
+      fontSize: settings.fontSize,
+      height: settings.lineHeight,
+      fontFamily: settings.fontFamily,
+      fontFamilyFallback: settings.fontFallback,
+      color: pageColors?.$2,
+    );
+    final list = ScrollablePositionedList.builder(
       itemScrollController: _scroll,
       itemPositionsListener: _positions,
-      padding: const EdgeInsets.fromLTRB(20, 12, 20, 48),
+      padding: EdgeInsets.fromLTRB(settings.margin, 12, settings.margin, 48),
       itemCount: _items.length,
       itemBuilder: (context, i) {
         final item = _items[i];
@@ -292,8 +334,9 @@ class _ReaderPageState extends State<ReaderPage> {
             child: Text(
               book.sections[item.section].title.toUpperCase(),
               style: theme.textTheme.labelMedium?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
+                color: pageColors?.$2.withValues(alpha: 0.7) ?? theme.colorScheme.onSurfaceVariant,
                 letterSpacing: 1.2,
+                fontSize: settings.fontSize * 0.7,
               ),
             ),
           );
@@ -302,6 +345,8 @@ class _ReaderPageState extends State<ReaderPage> {
             book: book,
             paragraph: item.paragraph!,
             current: reader.index,
+            style: textStyle,
+            justify: settings.justify,
             onTapSentence: (s) {
               reader.goTo(s);
               if (!reader.playing) reader.play();
@@ -318,6 +363,7 @@ class _ReaderPageState extends State<ReaderPage> {
         );
       },
     );
+    return pageColors == null ? list : ColoredBox(color: pageColors.$1, child: list);
   }
 }
 
@@ -410,12 +456,16 @@ class ParagraphView extends StatefulWidget {
     required this.book,
     required this.paragraph,
     required this.current,
+    required this.style,
+    required this.justify,
     required this.onTapSentence,
   });
 
   final Book book;
   final int paragraph;
   final int current;
+  final TextStyle? style;
+  final bool justify;
   final ValueChanged<int> onTapSentence;
 
   @override
@@ -469,7 +519,7 @@ class _ParagraphViewState extends State<ParagraphView> {
       color: theme.colorScheme.onTertiaryContainer,
     );
     return Padding(
-      padding: const EdgeInsets.only(bottom: 14),
+      padding: EdgeInsets.only(bottom: (widget.style?.fontSize ?? 19) * 0.75),
       child: Text.rich(
         TextSpan(children: [
           for (var s = p.firstSentence; s < p.endSentence; s++)
@@ -480,8 +530,8 @@ class _ParagraphViewState extends State<ParagraphView> {
               mouseCursor: SystemMouseCursors.click,
             ),
         ]),
-        textAlign: TextAlign.justify,
-        style: theme.textTheme.bodyLarge?.copyWith(fontSize: 19, height: 1.6),
+        textAlign: widget.justify ? TextAlign.justify : TextAlign.start,
+        style: widget.style,
       ),
     );
   }

@@ -122,7 +122,7 @@ RawBook parsePdf(Uint8List bytes) {
       title = doc.documentInformation.title.trim();
     } catch (_) {}
     final extractor = PdfTextExtractor(doc);
-    final sections = <RawSection>[];
+    final pages = <List<String>>[];
     for (var i = 0; i < doc.pages.count; i++) {
       String text;
       try {
@@ -130,16 +130,88 @@ RawBook parsePdf(Uint8List bytes) {
       } catch (_) {
         text = '';
       }
-      sections.add(RawSection('Page ${i + 1}', _pdfParagraphs(text)));
+      pages.add(_pdfParagraphs(text));
     }
-    if (sections.every((s) => s.paragraphs.isEmpty)) {
+    if (pages.every((p) => p.isEmpty)) {
       throw BookFormatException(
           'No text found. This PDF looks like scanned images, which need OCR first.');
     }
-    return RawBook(title, sections);
+    return RawBook(title, _pdfChapters(pages, _pdfBookmarks(doc)));
   } finally {
     doc.dispose();
   }
+}
+
+/// Chapter titles from the PDF's bookmarks (its built-in table of contents),
+/// as page index -> title. Covers chapters and the level below them.
+Map<int, String> _pdfBookmarks(PdfDocument doc) {
+  final marks = <(int, int, String)>[]; // page, order, title
+  void collect(PdfBookmarkBase parent, int depth) {
+    for (var i = 0; i < parent.count; i++) {
+      final PdfBookmark b;
+      try {
+        b = parent[i];
+      } catch (_) {
+        continue;
+      }
+      try {
+        final dest = b.destination ?? b.namedDestination?.destination;
+        final page = dest == null ? -1 : doc.pages.indexOf(dest.page);
+        final title = b.title.replaceAll(RegExp(r'\s+'), ' ').trim();
+        if (page >= 0 && title.isNotEmpty) marks.add((page, marks.length, title));
+      } catch (_) {
+        // Bookmarks pointing at missing pages or external files are skipped.
+      }
+      if (depth < 1) collect(b, depth + 1);
+    }
+  }
+
+  try {
+    collect(doc.bookmarks, 0);
+  } catch (_) {}
+  marks.sort((a, b) => a.$1 != b.$1 ? a.$1.compareTo(b.$1) : a.$2.compareTo(b.$2));
+  // Several bookmarks on one page: keep the first (the chapter rather than its first sub-section).
+  return {for (final m in marks.reversed) m.$1: m.$3};
+}
+
+final _chapterHeading = RegExp(
+  r'^(chapter|part|book|lesson|unit|अध्याय|प्रकरण|भाग)\s+([0-9]+|[ivxlcdm]+|[०-९]+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty)(\b|$|[.:\s])',
+  caseSensitive: false,
+);
+
+/// Groups page paragraphs into chapters. Uses bookmarks when the PDF has them,
+/// otherwise headings like "Chapter 3"; with neither, every page is its own section.
+List<RawSection> _pdfChapters(List<List<String>> pages, Map<int, String> bookmarks) {
+  final sections = <RawSection>[];
+  RawSection? current;
+  void startSection(String title) {
+    if (current != null && current!.paragraphs.isNotEmpty) sections.add(current!);
+    current = RawSection(title, []);
+  }
+
+  if (bookmarks.isNotEmpty) {
+    for (var p = 0; p < pages.length; p++) {
+      if (current == null || bookmarks.containsKey(p)) startSection(bookmarks[p] ?? 'Beginning');
+      current!.paragraphs.addAll(pages[p]);
+    }
+  } else {
+    for (final para in pages.expand((p) => p)) {
+      final isHeading = para.length < 80 && _chapterHeading.hasMatch(para);
+      if (current == null || isHeading) startSection(isHeading ? para : 'Beginning');
+      current!.paragraphs.add(para);
+    }
+    // Too few headings found to be meaningful: fall back to pages.
+    if (current != null && current!.paragraphs.isNotEmpty) sections.add(current!);
+    if (sections.length < 2) {
+      return [
+        for (var p = 0; p < pages.length; p++)
+          if (pages[p].isNotEmpty) RawSection('Page ${p + 1}', pages[p]),
+      ];
+    }
+    return sections;
+  }
+  if (current != null && current!.paragraphs.isNotEmpty) sections.add(current!);
+  return sections;
 }
 
 /// Joins wrapped lines back into paragraphs. A line that ends a sentence and is

@@ -11,6 +11,8 @@ The [`app/`](app/) folder holds a Flutter version that runs on its own, with no 
 
 **Library:** tap **Find books on this device** (or the library icon, `Ctrl+L` on Windows) to scan for every PDF and EPUB. Windows scans all local drives, skipping system folders such as Windows, Program Files and AppData; Android scans internal storage and SD cards, and asks once for **All files access**. Results are saved, so the scan only needs repeating when you add books.
 
+**Reading:** the **Aa** button adjusts text size, line spacing, margins, font (sans/serif), alignment and theme (light, dark, sepia); on Windows `Ctrl +` / `Ctrl -` change the size. PDF chapters come from the PDF's bookmarks, or from headings such as "Chapter 3" when it has none.
+
 Voices come from the device. The voice button lets you pick one voice each for **English**, **Hindi** and **Marathi**; Devanagari sentences switch to the Hindi or Marathi voice automatically (the app works out which of the two a book is written in).
 
 | | English (India) | Hindi | Marathi |
